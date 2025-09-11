@@ -1,3 +1,4 @@
 streamlit
 yfinance
-polygon
+polygon-api-client
+
