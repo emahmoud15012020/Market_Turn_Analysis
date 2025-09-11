@@ -1,4 +1,6 @@
 streamlit
 yfinance
 polygon-api-client
+plotly
+
 
