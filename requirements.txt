@@ -2,5 +2,7 @@ streamlit
 yfinance
 polygon-api-client
 plotly
+networkx
+
 
 
