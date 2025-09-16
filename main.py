@@ -6,6 +6,7 @@ from datetime import date
 import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
+import networkx as nx
 
 st.set_page_config(layout="wide")
 st.title("📊 Market Turn Analysis Dashboard")
@@ -46,13 +47,10 @@ try:
     vix_df = yf.download("^VIX", start=str(start_date), end=str(end_date))
 
     if not vix_df.empty:
-        # --- Fix MultiIndex columns ---
         if isinstance(vix_df.columns, pd.MultiIndex):
             vix_df.columns = vix_df.columns.get_level_values(0)
 
         vix_df = vix_df.reset_index()
-
-        # Let user choose MA windows
         col_ma1, col_ma2 = st.columns(2)
         with col_ma1:
             ma_short = st.slider("Short-term MA (days)", min_value=1, max_value=50, value=3)
@@ -63,7 +61,6 @@ try:
         vix_df["MA_long"] = vix_df["Close"].rolling(ma_long).mean()
 
         latest_vix = vix_df.iloc[-1]
-
         ma_short_val = float(latest_vix["MA_short"])
         ma_long_val = float(latest_vix["MA_long"])
 
@@ -72,18 +69,19 @@ try:
         else:
             vix_signal = f"Bullish Signal (Volatility Falling: {ma_short}-day < {ma_long}-day)"
 
-        st.line_chart(vix_df.set_index("Date")[["Close", "MA_short", "MA_long"]])
+        st.line_chart(vix_df.set_index("Date")["Close"].to_frame().assign(
+            MA_short=vix_df.set_index("Date")["MA_short"],
+            MA_long=vix_df.set_index("Date")["MA_long"]
+        ))
         st.info(f"Latest VIX: {latest_vix['Close']:.2f} → {vix_signal}")
 
 except Exception as e:
     st.error(f"Error fetching VIX: {e}")
 
 
-
 # --- PCR Analysis ---
 st.markdown("---")
 st.subheader("⚖️ Put/Call Ratio (PCR)")
-
 try:
     total_puts = total_calls = 0
     cursor = None
@@ -102,8 +100,6 @@ try:
 
     if total_calls > 0:
         pcr = total_puts / total_calls
-
-        # Gauge thresholds: <0.7 = bullish, 0.7-1.2 = neutral, >1.2 = bearish
         fig_pcr = go.Figure(go.Indicator(
             mode="gauge+number",
             value=pcr,
@@ -124,39 +120,29 @@ try:
                 }
             }
         ))
-
         st.plotly_chart(fig_pcr, use_container_width=True)
-
     else:
         st.warning("No call option data to compute PCR.")
 except Exception as e:
     st.error(f"Error fetching PCR: {e}")
 
 
-
 # --- Technical Analysis Section ---
 st.markdown("---")
 st.subheader("📊 Technical Analysis")
 
-# ----------------------
-# Data Fetch Helper
-# ----------------------
 @st.cache_data(ttl=300)
-def fetch_polygon_aggs(symbol, start_date, end_date, _client):  # _client avoids hashing error
+def fetch_polygon_aggs(symbol, start_date, end_date, _client):
     aggs = []
     try:
-        for a in _client.list_aggs(
-            symbol, 1, "day", str(start_date), str(end_date),
-            adjusted="true", sort="asc", limit=500
-        ):
+        for a in _client.list_aggs(symbol, 1, "day", str(start_date), str(end_date),
+                                   adjusted="true", sort="asc", limit=500):
             aggs.append(a)
         return aggs, None
     except Exception as e:
         return None, str(e)
 
 stock_df = None
-
-# 1) Try Polygon data
 aggs, fetch_err = fetch_polygon_aggs(symbol, start_date, end_date, client)
 if aggs:
     try:
@@ -172,7 +158,6 @@ if aggs:
 elif fetch_err:
     st.info(f"Polygon fetch failed, using Yahoo Finance: {fetch_err}")
 
-# 2) Fallback to yfinance
 if stock_df is None:
     try:
         yf_df = yf.download(symbol, start=str(start_date), end=str(end_date))
@@ -189,25 +174,19 @@ if stock_df is None:
     except Exception as e:
         st.error(f"Failed to fetch Yahoo Finance data: {e}")
 
-# ----------------------
-# Indicators
-# ----------------------
 if stock_df is None or stock_df.empty:
     st.warning("No data available for technical indicators.")
 else:
-    # RSI(9)
     delta = stock_df["close"].diff()
     gain = delta.clip(lower=0)
     loss = -delta.clip(upper=0)
     rs = gain.rolling(9).mean() / loss.rolling(9).mean()
     stock_df["RSI_9"] = 100 - (100 / (1 + rs))
 
-    # OBV
     price_diff = stock_df["close"].diff().fillna(0)
-    direction = np.sign(price_diff)  # +1, 0, -1
+    direction = np.sign(price_diff)
     stock_df["OBV"] = (direction * stock_df["volume"]).cumsum()
 
-    # Sliders for OBV Short & Long SMA
     col1, col2 = st.columns(2)
     with col1:
         obv_short_ma = st.slider("OBV Short MA (days)", min_value=2, max_value=50, value=10)
@@ -217,44 +196,29 @@ else:
     stock_df["OBV_MA_Short"] = stock_df["OBV"].rolling(window=obv_short_ma).mean()
     stock_df["OBV_MA_Long"] = stock_df["OBV"].rolling(window=obv_long_ma).mean()
 
-    # OBV Signal
     latest_rows = stock_df[["OBV_MA_Short","OBV_MA_Long"]].dropna()
     if not latest_rows.empty:
         latest = latest_rows.iloc[-1]
-        if latest["OBV_MA_Short"] > latest["OBV_MA_Long"]:
-            obv_signal = "📈 Bullish OBV Signal (Short > Long)"
-        else:
-            obv_signal = "📉 Bearish OBV Signal (Short < Long)"
+        obv_signal = "📈 Bullish OBV Signal (Short > Long)" if latest["OBV_MA_Short"] > latest["OBV_MA_Long"] else "📉 Bearish OBV Signal (Short < Long)"
     else:
         obv_signal = "Not enough data for OBV MAs."
 
-    # Price SMA / EMA
     stock_df["SMA_20"] = stock_df["close"].rolling(20).mean()
     stock_df["EMA_20"] = stock_df["close"].ewm(span=20, adjust=False).mean()
 
-    # MACD
     ema12 = stock_df["close"].ewm(span=12, adjust=False).mean()
     ema26 = stock_df["close"].ewm(span=26, adjust=False).mean()
     stock_df["MACD"] = ema12 - ema26
     stock_df["MACD_signal"] = stock_df["MACD"].ewm(span=9, adjust=False).mean()
 
-    # ----------------------
-    # Charts
-    # ----------------------
-
-    # OBV with Short & Long SMA
     fig_obv = go.Figure()
-    fig_obv.add_trace(go.Scatter(x=stock_df.index, y=stock_df["OBV"],
-                                 mode="lines", name="OBV", line=dict(color="blue")))
-    fig_obv.add_trace(go.Scatter(x=stock_df.index, y=stock_df["OBV_MA_Short"],
-                                 mode="lines", name=f"OBV SMA ({obv_short_ma})", line=dict(color="green")))
-    fig_obv.add_trace(go.Scatter(x=stock_df.index, y=stock_df["OBV_MA_Long"],
-                                 mode="lines", name=f"OBV SMA ({obv_long_ma})", line=dict(color="red", dash="dot")))
+    fig_obv.add_trace(go.Scatter(x=stock_df.index, y=stock_df["OBV"], mode="lines", name="OBV", line=dict(color="blue")))
+    fig_obv.add_trace(go.Scatter(x=stock_df.index, y=stock_df["OBV_MA_Short"], mode="lines", name=f"OBV SMA ({obv_short_ma})", line=dict(color="green")))
+    fig_obv.add_trace(go.Scatter(x=stock_df.index, y=stock_df["OBV_MA_Long"], mode="lines", name=f"OBV SMA ({obv_long_ma})", line=dict(color="red", dash="dot")))
     fig_obv.update_layout(title="OBV with Short & Long SMA", template="plotly_white", height=450)
     st.plotly_chart(fig_obv, use_container_width=True)
     st.info(obv_signal)
 
-    # Price with SMA/EMA
     fig_price = go.Figure()
     fig_price.add_trace(go.Scatter(x=stock_df.index, y=stock_df["close"], name="Close"))
     fig_price.add_trace(go.Scatter(x=stock_df.index, y=stock_df["SMA_20"], name="SMA 20"))
@@ -262,14 +226,22 @@ else:
     fig_price.update_layout(title=f"{symbol} Price with SMA & EMA", template="plotly_white", height=350)
     st.plotly_chart(fig_price, use_container_width=True)
 
-    # RSI and MACD
     col_rsi, col_macd = st.columns(2)
     with col_rsi:
         st.line_chart(stock_df[["RSI_9"]].dropna(), height=200)
     with col_macd:
         st.line_chart(stock_df[["MACD", "MACD_signal"]].dropna(), height=200)
 
+    # --- Turn Detection ---
+    window = 20
+    stock_df["zscore"] = (stock_df["close"] - stock_df["close"].rolling(window).mean()) / stock_df["close"].rolling(window).std()
+    turn_points = stock_df[stock_df["zscore"].abs() > 2]
 
+    fig_turns = go.Figure()
+    fig_turns.add_trace(go.Scatter(x=stock_df.index, y=stock_df["close"], mode="lines", name="Close"))
+    fig_turns.add_trace(go.Scatter(x=turn_points.index, y=turn_points["close"], mode="markers", name="Turn Signal", marker=dict(color="red", size=10, symbol="star")))
+    fig_turns.update_layout(title="Potential Market Turns (Z-score extremes)")
+    st.plotly_chart(fig_turns, use_container_width=True)
 
 
 # --- Market Sentiment Analysis ---
@@ -278,12 +250,7 @@ st.subheader("📰 Market Sentiment Analysis")
 
 sentiment_prob = 0.5
 try:
-    news = client.list_ticker_news(
-        symbol,
-        params={"published_utc.gte": str(start_date),
-                "published_utc.lte": str(end_date),
-                "limit": 50}
-    )
+    news = client.list_ticker_news(symbol, params={"published_utc.gte": str(start_date),"published_utc.lte": str(end_date),"limit": 50})
     sentiments = []
     for article in news:
         if hasattr(article, "insights") and article.insights:
@@ -296,10 +263,8 @@ try:
         neg = sum(1 for s in sentiments if s == "negative")
         neu = sum(1 for s in sentiments if s == "neutral")
         total = pos + neg + neu
-
         raw_score = (pos - neg) / total
         sentiment_prob = (raw_score + 1) / 2
-
         st.metric("Positive", pos)
         st.metric("Neutral", neu)
         st.metric("Negative", neg)
@@ -308,3 +273,77 @@ try:
 except Exception as e:
     st.error(f"Error fetching sentiment insights: {e}")
 
+
+
+
+# --- Correlation & Graph-Oriented Analysis ---
+st.markdown("---")
+st.subheader("🔗 Correlation & Network View")
+
+symbols_corr = [symbol, "^VIX", "SPY", "QQQ", "TLT", "DX-Y.NYB"]
+corr_series_list = []
+
+for s in symbols_corr:
+    try:
+        df = yf.download(s, start=str(start_date), end=str(end_date))
+        if not df.empty and "Close" in df.columns:
+            series = df["Close"].pct_change().dropna()
+            series.name = s  # give a proper name
+            corr_series_list.append(series)
+        else:
+            st.warning(f"No valid data for {s}")
+    except Exception as e:
+        st.warning(f"Could not fetch {s}: {e}")
+
+# Only proceed if we have at least 2 valid series
+if len(corr_series_list) >= 2:
+    corr_df = pd.concat(corr_series_list, axis=1).dropna(how="all")
+
+    if not corr_df.empty:
+        # Correlation heatmap
+        corr_matrix = corr_df.corr()
+        fig_corr = px.imshow(
+            corr_matrix,
+            text_auto=True,
+            aspect="auto",
+            color_continuous_scale="RdBu_r"
+        )
+        st.plotly_chart(fig_corr, use_container_width=True)
+
+        # Network graph
+        G = nx.Graph()
+        for i in corr_matrix.columns:
+            for j in corr_matrix.columns:
+                if i != j and abs(corr_matrix.loc[i, j]) > 0.6:
+                    G.add_edge(i, j, weight=corr_matrix.loc[i, j])
+
+        if G.number_of_edges() > 0:
+            pos = nx.spring_layout(G, k=0.5)
+            edge_x, edge_y, node_x, node_y = [], [], [], []
+
+            for edge in G.edges():
+                x0, y0 = pos[edge[0]]
+                x1, y1 = pos[edge[1]]
+                edge_x += [x0, x1, None]
+                edge_y += [y0, y1, None]
+
+            for node in G.nodes():
+                x, y = pos[node]
+                node_x.append(x)
+                node_y.append(y)
+
+            fig_net = go.Figure()
+            fig_net.add_trace(go.Scatter(x=edge_x, y=edge_y, mode="lines", line=dict(width=1, color="gray")))
+            fig_net.add_trace(go.Scatter(
+                x=node_x, y=node_y, mode="markers+text",
+                text=list(G.nodes()), marker=dict(size=20, color="blue"),
+                textposition="top center"
+            ))
+            fig_net.update_layout(title="Market Correlation Network", showlegend=False)
+            st.plotly_chart(fig_net, use_container_width=True)
+        else:
+            st.info("No strong correlations to show in the network graph.")
+    else:
+        st.info("Not enough overlapping data to compute correlation.")
+else:
+    st.warning("Not enough valid series to compute correlation.")
