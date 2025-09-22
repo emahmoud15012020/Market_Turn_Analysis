@@ -75,9 +75,15 @@ try:
         ))
         st.info(f"Latest VIX: {latest_vix['Close']:.2f} → {vix_signal}")
 
+        with st.expander("ℹ️ What is VIX Analysis?"):
+            st.markdown("""
+            - The **VIX (Volatility Index)** measures expected volatility in the S&P500.
+            - Derived from S&P500 options prices (30-day implied volatility).
+            - **Short-term MA > Long-term MA** → rising volatility → bearish.
+            - **Short-term MA < Long-term MA** → falling volatility → bullish.
+            """)
 except Exception as e:
     st.error(f"Error fetching VIX: {e}")
-
 
 # --- PCR Analysis ---
 st.markdown("---")
@@ -88,13 +94,15 @@ try:
     while True:
         response = client.list_snapshot_options_chain(
             symbol,
-            params={"order":"asc", "limit":250, "sort":"ticker", "cursor":cursor}
+            params={"order": "asc", "limit": 250, "sort": "ticker", "cursor": cursor}
         )
         for o in response:
             contract_type = o.details.contract_type
             oi = getattr(o, "open_interest", 0) or 0
-            if contract_type == "put": total_puts += oi
-            elif contract_type == "call": total_calls += oi
+            if contract_type == "put":
+                total_puts += oi
+            elif contract_type == "call":
+                total_calls += oi
         cursor = getattr(response, "next_url", None)
         if not cursor: break
 
@@ -121,15 +129,25 @@ try:
             }
         ))
         st.plotly_chart(fig_pcr, use_container_width=True)
+
+        with st.expander("ℹ️ What is the Put/Call Ratio (PCR)?"):
+            st.markdown("""
+            - **PCR = Open Interest in Puts ÷ Open Interest in Calls**.
+            - Interpreted as:
+                - PCR > 1.2 → **Bearish** (more puts than calls).
+                - PCR < 0.7 → **Bullish** (more calls than puts).
+                - 0.7–1.2 → Neutral.
+            - Often used as a **contrarian signal**.
+            """)
     else:
         st.warning("No call option data to compute PCR.")
 except Exception as e:
     st.error(f"Error fetching PCR: {e}")
 
-
 # --- Technical Analysis Section ---
 st.markdown("---")
 st.subheader("📊 Technical Analysis")
+
 
 @st.cache_data(ttl=300)
 def fetch_polygon_aggs(symbol, start_date, end_date, _client):
@@ -141,6 +159,7 @@ def fetch_polygon_aggs(symbol, start_date, end_date, _client):
         return aggs, None
     except Exception as e:
         return None, str(e)
+
 
 stock_df = None
 aggs, fetch_err = fetch_polygon_aggs(symbol, start_date, end_date, client)
@@ -163,9 +182,9 @@ if stock_df is None:
         yf_df = yf.download(symbol, start=str(start_date), end=str(end_date))
         if not yf_df.empty and "Volume" in yf_df.columns:
             yf_df = yf_df.rename(columns={
-                "Open":"open","High":"high","Low":"low","Close":"close","Volume":"volume"
+                "Open": "open", "High": "high", "Low": "low", "Close": "close", "Volume": "volume"
             })
-            stock_df = yf_df[["open","high","low","close","volume"]].copy()
+            stock_df = yf_df[["open", "high", "low", "close", "volume"]].copy()
             stock_df.index = pd.to_datetime(stock_df.index)
             stock_df = stock_df.sort_index()
             st.info("Using Yahoo Finance data.")
@@ -191,15 +210,16 @@ else:
     with col1:
         obv_short_ma = st.slider("OBV Short MA (days)", min_value=2, max_value=50, value=10)
     with col2:
-        obv_long_ma = st.slider("OBV Long MA (days)", min_value=obv_short_ma+1, max_value=200, value=30)
+        obv_long_ma = st.slider("OBV Long MA (days)", min_value=obv_short_ma + 1, max_value=200, value=30)
 
     stock_df["OBV_MA_Short"] = stock_df["OBV"].rolling(window=obv_short_ma).mean()
     stock_df["OBV_MA_Long"] = stock_df["OBV"].rolling(window=obv_long_ma).mean()
 
-    latest_rows = stock_df[["OBV_MA_Short","OBV_MA_Long"]].dropna()
+    latest_rows = stock_df[["OBV_MA_Short", "OBV_MA_Long"]].dropna()
     if not latest_rows.empty:
         latest = latest_rows.iloc[-1]
-        obv_signal = "📈 Bullish OBV Signal (Short > Long)" if latest["OBV_MA_Short"] > latest["OBV_MA_Long"] else "📉 Bearish OBV Signal (Short < Long)"
+        obv_signal = "📈 Bullish OBV Signal (Short > Long)" if latest["OBV_MA_Short"] > latest[
+            "OBV_MA_Long"] else "📉 Bearish OBV Signal (Short < Long)"
     else:
         obv_signal = "Not enough data for OBV MAs."
 
@@ -212,9 +232,14 @@ else:
     stock_df["MACD_signal"] = stock_df["MACD"].ewm(span=9, adjust=False).mean()
 
     fig_obv = go.Figure()
-    fig_obv.add_trace(go.Scatter(x=stock_df.index, y=stock_df["OBV"], mode="lines", name="OBV", line=dict(color="blue")))
-    fig_obv.add_trace(go.Scatter(x=stock_df.index, y=stock_df["OBV_MA_Short"], mode="lines", name=f"OBV SMA ({obv_short_ma})", line=dict(color="green")))
-    fig_obv.add_trace(go.Scatter(x=stock_df.index, y=stock_df["OBV_MA_Long"], mode="lines", name=f"OBV SMA ({obv_long_ma})", line=dict(color="red", dash="dot")))
+    fig_obv.add_trace(
+        go.Scatter(x=stock_df.index, y=stock_df["OBV"], mode="lines", name="OBV", line=dict(color="blue")))
+    fig_obv.add_trace(
+        go.Scatter(x=stock_df.index, y=stock_df["OBV_MA_Short"], mode="lines", name=f"OBV SMA ({obv_short_ma})",
+                   line=dict(color="green")))
+    fig_obv.add_trace(
+        go.Scatter(x=stock_df.index, y=stock_df["OBV_MA_Long"], mode="lines", name=f"OBV SMA ({obv_long_ma})",
+                   line=dict(color="red", dash="dot")))
     fig_obv.update_layout(title="OBV with Short & Long SMA", template="plotly_white", height=450)
     st.plotly_chart(fig_obv, use_container_width=True)
     st.info(obv_signal)
@@ -232,17 +257,69 @@ else:
     with col_macd:
         st.line_chart(stock_df[["MACD", "MACD_signal"]].dropna(), height=200)
 
-    # --- Turn Detection ---
+    with st.expander("ℹ️ How Technical Indicators Work?"):
+        st.markdown("""
+        - **OBV (On Balance Volume):**
+          - Cumulative volume adjusted by price direction.
+          - Signals when short-term OBV MA crosses long-term OBV MA.
+
+        - **RSI (Relative Strength Index):**
+          - RSI = 100 - (100 / (1 + RS)), RS = Avg(Gains)/Avg(Losses).
+          - RSI > 70 = Overbought, RSI < 30 = Oversold.
+
+        - **MACD (Moving Average Convergence Divergence):**
+          - MACD = EMA(12) - EMA(26).
+          - Signal line = EMA(9) of MACD.
+          - Bullish if MACD > Signal, Bearish if MACD < Signal.
+
+        - **SMA/EMA:**
+          - SMA = simple average, EMA = weighted for recency.
+          - Crossovers can indicate trend reversals.
+        """)
+
+    # --- Turn Detection (Z-score) ---
     window = 20
-    stock_df["zscore"] = (stock_df["close"] - stock_df["close"].rolling(window).mean()) / stock_df["close"].rolling(window).std()
-    turn_points = stock_df[stock_df["zscore"].abs() > 2]
+    stock_df["zscore"] = (
+            (stock_df["close"] - stock_df["close"].rolling(window).mean())
+            / stock_df["close"].rolling(window).std()
+    )
+
+    # Split bullish vs bearish extremes
+    bullish_turns = stock_df[stock_df["zscore"] < -2]
+    bearish_turns = stock_df[stock_df["zscore"] > 2]
 
     fig_turns = go.Figure()
-    fig_turns.add_trace(go.Scatter(x=stock_df.index, y=stock_df["close"], mode="lines", name="Close"))
-    fig_turns.add_trace(go.Scatter(x=turn_points.index, y=turn_points["close"], mode="markers", name="Turn Signal", marker=dict(color="red", size=10, symbol="star")))
+    fig_turns.add_trace(go.Scatter(
+        x=stock_df.index, y=stock_df["close"],
+        mode="lines", name="Close", line=dict(color="blue")
+    ))
+    fig_turns.add_trace(go.Scatter(
+        x=bullish_turns.index, y=bullish_turns["close"],
+        mode="markers", name="Bullish Signal",
+        marker=dict(color="green", size=10, symbol="star")
+    ))
+    fig_turns.add_trace(go.Scatter(
+        x=bearish_turns.index, y=bearish_turns["close"],
+        mode="markers", name="Bearish Signal",
+        marker=dict(color="red", size=10, symbol="star")
+    ))
     fig_turns.update_layout(title="Potential Market Turns (Z-score extremes)")
     st.plotly_chart(fig_turns, use_container_width=True)
 
+    # --- Explanation for Z-score Detection ---
+    with st.expander("ℹ️ How Z-score Turn Detection Works?"):
+        st.markdown("""
+        - The **Z-score** measures how far the current price is from its recent average:
+          \n**Z = (Price - Rolling Mean) ÷ Rolling Std Dev**
+        - In this dashboard we use a 20-day rolling window.
+        - **Interpretation:**
+            - **Z > +2 (red stars)** → Price is unusually high → possible **top / bearish reversal**.
+            - **Z < -2 (green stars)** → Price is unusually low → possible **bottom / bullish bounce**.
+        - Why it matters:
+            - Prices rarely stay far from their mean for long.
+            - Extreme deviations often precede **market turns**.
+            - Best used with other indicators (RSI, OBV, Sentiment) for confirmation.
+        """)
 
 # --- Market Sentiment Analysis ---
 st.markdown("---")
@@ -250,7 +327,9 @@ st.subheader("📰 Market Sentiment Analysis")
 
 sentiment_prob = 0.5
 try:
-    news = client.list_ticker_news(symbol, params={"published_utc.gte": str(start_date),"published_utc.lte": str(end_date),"limit": 50})
+    news = client.list_ticker_news(symbol,
+                                   params={"published_utc.gte": str(start_date), "published_utc.lte": str(end_date),
+                                           "limit": 50})
     sentiments = []
     for article in news:
         if hasattr(article, "insights") and article.insights:
@@ -268,9 +347,16 @@ try:
         st.metric("Positive", pos)
         st.metric("Neutral", neu)
         st.metric("Negative", neg)
+
+        with st.expander("ℹ️ How Sentiment Analysis Works?"):
+            st.markdown("""
+            - News sentiment from Polygon.io tagged to this ticker.
+            - Articles labeled **Positive, Neutral, or Negative**.
+            - Score = (Positive - Negative) ÷ Total, scaled 0–1.
+            - High positivity = bullish, high negativity = bearish.
+            - Divergence from price can signal market turns.
+            """)
     else:
         st.info("No sentiment insights available.")
 except Exception as e:
     st.error(f"Error fetching sentiment insights: {e}")
-
-
