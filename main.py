@@ -400,21 +400,18 @@ import time
 # Scraper Functions
 # ---------------------------
 def scrape_cboe_daily_pcr_batch(n=10):
-    """Scrape last n days of TOTAL PUT/CALL RATIO using a single Selenium session"""
-    options = Options()
-    options.add_argument("--headless=new")
-    driver = webdriver.Chrome(options=options)
-
+    """Scrape last n days of TOTAL PUT/CALL RATIO using requests (no Selenium needed)"""
     results = []
     for i in range(n):
         dt = date.today() - timedelta(days=i)
         dt_str = dt.strftime("%Y-%m-%d")
         url = f"https://www.cboe.com/us/options/market_statistics/daily/?dt={dt_str}"
 
-        driver.get(url)
-        time.sleep(2)  # wait for JS to load
+        response = requests.get(url, headers={"User-Agent": "Mozilla/5.0"})
+        if response.status_code != 200:
+            continue
 
-        soup = BeautifulSoup(driver.page_source, "html.parser")
+        soup = BeautifulSoup(response.text, "html.parser")
         rows = soup.find_all("tr")
         for row in rows:
             cells = row.find_all("td")
@@ -427,10 +424,5 @@ def scrape_cboe_daily_pcr_batch(n=10):
                     except:
                         pass
 
-    driver.quit()
-    df = pd.DataFrame(results).sort_values("Date",ascending=False).reset_index(drop=True)  # <--- reset index
+    df = pd.DataFrame(results).sort_values("Date").reset_index(drop=True)
     return df
-
-
-
-
