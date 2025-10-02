@@ -1,12 +1,11 @@
 streamlit
+pandas
+numpy
 yfinance
 polygon-api-client
 plotly
-networkx
 selenium
 webdriver-manager
 beautifulsoup4
-pandas
-
-
-
+requests
+networkx
