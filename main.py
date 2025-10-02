@@ -399,30 +399,60 @@ import time
 # ---------------------------
 # Scraper Functions
 # ---------------------------
+from selenium import webdriver
+from selenium.webdriver.firefox.options import Options as FirefoxOptions
+from selenium.webdriver.firefox.service import Service
+from webdriver_manager.firefox import GeckoDriverManager
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from bs4 import BeautifulSoup
+from datetime import date, timedelta
+import pandas as pd
+
+
 def scrape_cboe_daily_pcr_batch(n=10):
-    """Scrape last n days of TOTAL PUT/CALL RATIO using requests (no Selenium needed)"""
+    """Scrape last n days of TOTAL PUT/CALL RATIO using headless Firefox"""
+    options = FirefoxOptions()
+    options.add_argument("--headless")
+    options.add_argument("--disable-gpu")
+    options.add_argument("--no-sandbox")
+    options.add_argument("--disable-dev-shm-usage")
+
+    service = Service(GeckoDriverManager().install())
+    driver = webdriver.Firefox(options=options, service=service)
+
     results = []
-    for i in range(n):
-        dt = date.today() - timedelta(days=i)
-        dt_str = dt.strftime("%Y-%m-%d")
-        url = f"https://www.cboe.com/us/options/market_statistics/daily/?dt={dt_str}"
+    try:
+        for i in range(n):
+            dt = date.today() - timedelta(days=i)
+            dt_str = dt.strftime("%Y-%m-%d")
+            url = f"https://www.cboe.com/us/options/market_statistics/daily/?dt={dt_str}"
+            driver.get(url)
 
-        response = requests.get(url, headers={"User-Agent": "Mozilla/5.0"})
-        if response.status_code != 200:
-            continue
+            # Wait for table to load
+            try:
+                WebDriverWait(driver, 10).until(
+                    EC.presence_of_element_located(
+                        (By.XPATH, "//table[contains(@class,'TableComponents__StyledTable')]"))
+                )
+            except:
+                continue  # skip if page/table not loaded
 
-        soup = BeautifulSoup(response.text, "html.parser")
-        rows = soup.find_all("tr")
-        for row in rows:
-            cells = row.find_all("td")
-            if len(cells) >= 2:
-                label = cells[0].get_text(strip=True).upper()
-                if "TOTAL PUT/CALL RATIO" in label:
-                    try:
-                        value = float(cells[1].get_text(strip=True))
-                        results.append({"Date": dt, "Total_PCR": value})
-                    except:
-                        pass
+            soup = BeautifulSoup(driver.page_source, "html.parser")
+            rows = soup.find_all("tr")
+            for row in rows:
+                cells = row.find_all("td")
+                if len(cells) >= 2:
+                    label = cells[0].get_text(strip=True).upper()
+                    if "TOTAL PUT/CALL RATIO" in label:
+                        try:
+                            value = float(cells[1].get_text(strip=True))
+                            results.append({"Date": dt, "Total_PCR": value})
+                        except:
+                            pass
+    finally:
+        driver.quit()
 
-    df = pd.DataFrame(results).sort_values("Date").reset_index(drop=True)
+    df = pd.DataFrame(results).sort_values("Date", ascending=False).reset_index(drop=True)
     return df
