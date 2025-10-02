@@ -7,6 +7,12 @@ import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
 import networkx as nx
+import requests
+from bs4 import BeautifulSoup
+from datetime import date, timedelta
+from selenium import webdriver
+from selenium.webdriver.chrome.options import Options
+import time
 
 st.set_page_config(layout="wide")
 st.title("📊 Market Turn Analysis Dashboard")
@@ -143,6 +149,25 @@ try:
         st.warning("No call option data to compute PCR.")
 except Exception as e:
     st.error(f"Error fetching PCR: {e}")
+
+@st.cache_data
+def fetch_last_n_pcr(n=10):
+    return scrape_cboe_daily_pcr_batch(n)
+# ---------------------------
+# Streamlit App Layout
+# ---------------------------
+st.title("📊 CBOE Put/Call Ratio Dashboard")
+
+st.write("History of **TOTAL PUT/CALL RATIO** :")
+
+df_pcr = fetch_last_n_pcr(15)
+
+if df_pcr.empty:
+    st.error("No data available. Try refreshing.")
+else:
+    # Hide index and show clean table
+    st.table(df_pcr.style.hide(axis="index"))
+
 
 # --- Technical Analysis Section ---
 st.markdown("---")
@@ -360,3 +385,52 @@ try:
         st.info("No sentiment insights available.")
 except Exception as e:
     st.error(f"Error fetching sentiment insights: {e}")
+
+
+
+import streamlit as st
+import pandas as pd
+from datetime import date, timedelta
+from selenium import webdriver
+from selenium.webdriver.chrome.options import Options
+from bs4 import BeautifulSoup
+import time
+
+# ---------------------------
+# Scraper Functions
+# ---------------------------
+def scrape_cboe_daily_pcr_batch(n=10):
+    """Scrape last n days of TOTAL PUT/CALL RATIO using a single Selenium session"""
+    options = Options()
+    options.add_argument("--headless=new")
+    driver = webdriver.Chrome(options=options)
+
+    results = []
+    for i in range(n):
+        dt = date.today() - timedelta(days=i)
+        dt_str = dt.strftime("%Y-%m-%d")
+        url = f"https://www.cboe.com/us/options/market_statistics/daily/?dt={dt_str}"
+
+        driver.get(url)
+        time.sleep(2)  # wait for JS to load
+
+        soup = BeautifulSoup(driver.page_source, "html.parser")
+        rows = soup.find_all("tr")
+        for row in rows:
+            cells = row.find_all("td")
+            if len(cells) >= 2:
+                label = cells[0].get_text(strip=True).upper()
+                if "TOTAL PUT/CALL RATIO" in label:
+                    try:
+                        value = float(cells[1].get_text(strip=True))
+                        results.append({"Date": dt, "Total_PCR": value})
+                    except:
+                        pass
+
+    driver.quit()
+    df = pd.DataFrame(results).sort_values("Date",ascending=False).reset_index(drop=True)  # <--- reset index
+    return df
+
+
+
+
