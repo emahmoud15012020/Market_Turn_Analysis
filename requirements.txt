@@ -3,6 +3,7 @@ yfinance
 polygon-api-client
 plotly
 networkx
+selenium
 
 
 
