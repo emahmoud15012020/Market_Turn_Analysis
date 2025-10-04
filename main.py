@@ -130,7 +130,10 @@ try:
         vix_df["MA_long"] = vix_df["Close"].rolling(ma_long).mean()
 
         latest_vix = vix_df.iloc[-1]
-        if latest_vix["MA_short"] > latest_vix["MA_long"]:
+        ma_short_val = float(latest_vix["MA_short"])
+        ma_long_val = float(latest_vix["MA_long"])
+
+        if ma_short_val > ma_long_val:
             vix_signal = f"Bearish Signal (Volatility Rising: {ma_short}-day > {ma_long}-day)"
         else:
             vix_signal = f"Bullish Signal (Volatility Falling: {ma_short}-day < {ma_long}-day)"
@@ -151,3 +154,9 @@ if df_pcr.empty:
     st.error("No data available. Try refreshing.")
 else:
     st.table(df_pcr.style.hide(axis="index"))
+
+# ---------------------------
+# The rest of your code (Polygon PCR gauge, Technical Analysis with RSI/OBV/MACD, 
+# Z-score turn detection, Market Sentiment) stays the same 
+# — just remove the duplicate Firefox scraper block at the bottom.
+# ---------------------------
