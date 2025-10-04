@@ -9,5 +9,6 @@ webdriver-manager
 beautifulsoup4
 requests
 networkx
-webdriver_manager
+
+
 
