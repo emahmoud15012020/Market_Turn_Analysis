@@ -223,6 +223,7 @@ else:
 st.markdown("---")
 st.subheader("📊 Technical Analysis")
 
+
 @st.cache_data(ttl=300)
 def fetch_polygon_aggs(symbol, start_date, end_date, _client):
     aggs = []
@@ -234,92 +235,122 @@ def fetch_polygon_aggs(symbol, start_date, end_date, _client):
     except Exception as e:
         return None, str(e)
 
+
 stock_df = None
 aggs, fetch_err = fetch_polygon_aggs(symbol, start_date, end_date, client)
 if aggs:
     try:
-        stock_df = pd.DataFrame([{
-            "timestamp": a.timestamp, "open": a.open, "high": a.high,
-            "low": a.low, "close": a.close, "volume": a.volume} for a in aggs])
+        data = [{"timestamp": a.timestamp, "open": a.open, "high": a.high,
+                 "low": a.low, "close": a.close, "volume": a.volume} for a in aggs]
+        stock_df = pd.DataFrame(data)
         stock_df['timestamp'] = pd.to_datetime(stock_df['timestamp'], unit='ms')
         stock_df.set_index('timestamp', inplace=True)
-        stock_df.sort_index(inplace=True)
-    except:
+        stock_df = stock_df.sort_index()
+    except Exception as e:
+        st.warning(f"Error parsing Polygon data → falling back to Yahoo Finance: {e}")
         stock_df = None
+elif fetch_err:
+    st.info(f"Polygon fetch failed, using Yahoo Finance: {fetch_err}")
 
 if stock_df is None:
     try:
         yf_df = yf.download(symbol, start=str(start_date), end=str(end_date))
-        yf_df = yf_df.rename(columns={"Open":"open","High":"high","Low":"low","Close":"close","Volume":"volume"})
-        stock_df = yf_df[["open","high","low","close","volume"]].copy()
-        stock_df.index = pd.to_datetime(stock_df.index)
-    except:
-        st.warning("Failed to fetch stock data.")
+        if not yf_df.empty and "Volume" in yf_df.columns:
+            yf_df = yf_df.rename(columns={
+                "Open": "open", "High": "high", "Low": "low", "Close": "close", "Volume": "volume"
+            })
+            stock_df = yf_df[["open", "high", "low", "close", "volume"]].copy()
+            stock_df.index = pd.to_datetime(stock_df.index)
+            stock_df = stock_df.sort_index()
+            st.info("Using Yahoo Finance data.")
+        else:
+            st.warning("Yahoo Finance returned no volume data (OBV requires volume).")
+    except Exception as e:
+        st.error(f"Failed to fetch Yahoo Finance data: {e}")
 
-# Technical Calculations
-if stock_df is not None and not stock_df.empty:
-    # RSI
+if stock_df is None or stock_df.empty:
+    st.warning("No data available for technical indicators.")
+else:
     delta = stock_df["close"].diff()
     gain = delta.clip(lower=0)
     loss = -delta.clip(upper=0)
     rs = gain.rolling(9).mean() / loss.rolling(9).mean()
     stock_df["RSI_9"] = 100 - (100 / (1 + rs))
 
-    # OBV
-    direction = np.sign(stock_df["close"].diff().fillna(0))
+    price_diff = stock_df["close"].diff().fillna(0)
+    direction = np.sign(price_diff)
     stock_df["OBV"] = (direction * stock_df["volume"]).cumsum()
 
-    # OBV MA sliders
     col1, col2 = st.columns(2)
     with col1:
-        obv_short_ma = st.slider("OBV Short MA (days)", 2, 50, 10)
+        obv_short_ma = st.slider("OBV Short MA (days)", min_value=2, max_value=50, value=10)
     with col2:
-        obv_long_ma = st.slider("OBV Long MA (days)", obv_short_ma+1, 200, 30)
+        obv_long_ma = st.slider("OBV Long MA (days)", min_value=obv_short_ma + 1, max_value=200, value=30)
 
-    stock_df["OBV_MA_Short"] = stock_df["OBV"].rolling(obv_short_ma).mean()
-    stock_df["OBV_MA_Long"] = stock_df["OBV"].rolling(obv_long_ma).mean()
+    stock_df["OBV_MA_Short"] = stock_df["OBV"].rolling(window=obv_short_ma).mean()
+    stock_df["OBV_MA_Long"] = stock_df["OBV"].rolling(window=obv_long_ma).mean()
 
-    # SMA/EMA
+    latest_rows = stock_df[["OBV_MA_Short", "OBV_MA_Long"]].dropna()
+    if not latest_rows.empty:
+        latest = latest_rows.iloc[-1]
+        obv_signal = "📈 Bullish OBV Signal (Short > Long)" if latest["OBV_MA_Short"] > latest[
+            "OBV_MA_Long"] else "📉 Bearish OBV Signal (Short < Long)"
+    else:
+        obv_signal = "Not enough data for OBV MAs."
+
     stock_df["SMA_20"] = stock_df["close"].rolling(20).mean()
     stock_df["EMA_20"] = stock_df["close"].ewm(span=20, adjust=False).mean()
 
-    # MACD
     ema12 = stock_df["close"].ewm(span=12, adjust=False).mean()
     ema26 = stock_df["close"].ewm(span=26, adjust=False).mean()
     stock_df["MACD"] = ema12 - ema26
     stock_df["MACD_signal"] = stock_df["MACD"].ewm(span=9, adjust=False).mean()
 
-    # Plot OBV
     fig_obv = go.Figure()
-    fig_obv.add_trace(go.Scatter(x=stock_df.index, y=stock_df["OBV"], name="OBV"))
-    fig_obv.add_trace(go.Scatter(x=stock_df.index, y=stock_df["OBV_MA_Short"], name=f"OBV SMA {obv_short_ma}"))
-    fig_obv.add_trace(go.Scatter(x=stock_df.index, y=stock_df["OBV_MA_Long"], name=f"OBV SMA {obv_long_ma}"))
+    fig_obv.add_trace(
+        go.Scatter(x=stock_df.index, y=stock_df["OBV"], mode="lines", name="OBV", line=dict(color="blue")))
+    fig_obv.add_trace(
+        go.Scatter(x=stock_df.index, y=stock_df["OBV_MA_Short"], mode="lines", name=f"OBV SMA ({obv_short_ma})",
+                   line=dict(color="green")))
+    fig_obv.add_trace(
+        go.Scatter(x=stock_df.index, y=stock_df["OBV_MA_Long"], mode="lines", name=f"OBV SMA ({obv_long_ma})",
+                   line=dict(color="red", dash="dot")))
+    fig_obv.update_layout(title="OBV with Short & Long SMA", template="plotly_white", height=450)
     st.plotly_chart(fig_obv, use_container_width=True)
+    st.info(obv_signal)
 
-    # Plot Price
     fig_price = go.Figure()
     fig_price.add_trace(go.Scatter(x=stock_df.index, y=stock_df["close"], name="Close"))
     fig_price.add_trace(go.Scatter(x=stock_df.index, y=stock_df["SMA_20"], name="SMA 20"))
     fig_price.add_trace(go.Scatter(x=stock_df.index, y=stock_df["EMA_20"], name="EMA 20"))
+    fig_price.update_layout(title=f"{symbol} Price with SMA & EMA", template="plotly_white", height=350)
     st.plotly_chart(fig_price, use_container_width=True)
 
-    # Plot RSI & MACD
     col_rsi, col_macd = st.columns(2)
     with col_rsi:
         st.line_chart(stock_df[["RSI_9"]].dropna(), height=200)
     with col_macd:
-        st.line_chart(stock_df[["MACD","MACD_signal"]].dropna(), height=200)
+        st.line_chart(stock_df[["MACD", "MACD_signal"]].dropna(), height=200)
 
-    # Z-score Market Turns
-    stock_df["zscore"] = (stock_df["close"] - stock_df["close"].rolling(20).mean()) / stock_df["close"].rolling(20).std()
-    bullish_turns = stock_df[stock_df["zscore"] < -2]
-    bearish_turns = stock_df[stock_df["zscore"] > 2]
+    with st.expander("ℹ️ How Technical Indicators Work?"):
+        st.markdown("""
+        - **OBV (On Balance Volume):**
+          - Cumulative volume adjusted by price direction.
+          - Signals when short-term OBV MA crosses long-term OBV MA.
 
-    fig_turns = go.Figure()
-    fig_turns.add_trace(go.Scatter(x=stock_df.index, y=stock_df["close"], mode="lines", name="Close"))
-    fig_turns.add_trace(go.Scatter(x=bullish_turns.index, y=bullish_turns["close"], mode="markers", name="Bullish", marker=dict(color="green", symbol="star", size=10)))
-    fig_turns.add_trace(go.Scatter(x=bearish_turns.index, y=bearish_turns["close"], mode="markers", name="Bearish", marker=dict(color="red", symbol="star", size=10)))
-    st.plotly_chart(fig_turns, use_container_width=True)
+        - **RSI (Relative Strength Index):**
+          - RSI = 100 - (100 / (1 + RS)), RS = Avg(Gains)/Avg(Losses).
+          - RSI > 70 = Overbought, RSI < 30 = Oversold.
+
+        - **MACD (Moving Average Convergence Divergence):**
+          - MACD = EMA(12) - EMA(26).
+          - Signal line = EMA(9) of MACD.
+          - Bullish if MACD > Signal, Bearish if MACD < Signal.
+
+        - **SMA/EMA:**
+          - SMA = simple average, EMA = weighted for recency.
+          - Crossovers can indicate trend reversals.
+        """)
 
 # ---------------------------
 # Market Sentiment
