@@ -55,20 +55,22 @@ with col1:
     except Exception as e:
         st.error(f"Error fetching quote: {e}")
 
-# ---------------------------
-# VIX Analysis
-# ---------------------------
+# --- VIX Analysis ---
 st.markdown("---")
 st.subheader("📈 VIX Analysis")
 try:
     vix_df = yf.download("^VIX", start=str(start_date), end=str(end_date))
+
     if not vix_df.empty:
+        if isinstance(vix_df.columns, pd.MultiIndex):
+            vix_df.columns = vix_df.columns.get_level_values(0)
+
         vix_df = vix_df.reset_index()
         col_ma1, col_ma2 = st.columns(2)
         with col_ma1:
-            ma_short = st.slider("Short-term MA (days)", 1, 50, 3)
+            ma_short = st.slider("Short-term MA (days)", min_value=1, max_value=50, value=3)
         with col_ma2:
-            ma_long = st.slider("Long-term MA (days)", 5, 200, 9)
+            ma_long = st.slider("Long-term MA (days)", min_value=5, max_value=200, value=9)
 
         vix_df["MA_short"] = vix_df["Close"].rolling(ma_short).mean()
         vix_df["MA_long"] = vix_df["Close"].rolling(ma_long).mean()
@@ -76,10 +78,25 @@ try:
         latest_vix = vix_df.iloc[-1]
         ma_short_val = float(latest_vix["MA_short"])
         ma_long_val = float(latest_vix["MA_long"])
-        vix_signal = ("Bearish Signal" if ma_short_val > ma_long_val else "Bullish Signal")
 
-        st.line_chart(vix_df.set_index("Date")[["Close", "MA_short", "MA_long"]])
+        if ma_short_val > ma_long_val:
+            vix_signal = f"Bearish Signal (Volatility Rising: {ma_short}-day > {ma_long}-day)"
+        else:
+            vix_signal = f"Bullish Signal (Volatility Falling: {ma_short}-day < {ma_long}-day)"
+
+        st.line_chart(vix_df.set_index("Date")["Close"].to_frame().assign(
+            MA_short=vix_df.set_index("Date")["MA_short"],
+            MA_long=vix_df.set_index("Date")["MA_long"]
+        ))
         st.info(f"Latest VIX: {latest_vix['Close']:.2f} → {vix_signal}")
+
+        with st.expander("ℹ️ What is VIX Analysis?"):
+            st.markdown("""
+            - The **VIX (Volatility Index)** measures expected volatility in the S&P500.
+            - Derived from S&P500 options prices (30-day implied volatility).
+            - **Short-term MA > Long-term MA** → rising volatility → bearish.
+            - **Short-term MA < Long-term MA** → falling volatility → bullish.
+            """)
 except Exception as e:
     st.error(f"Error fetching VIX: {e}")
 
