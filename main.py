@@ -156,7 +156,7 @@ def fetch_last_n_pcr(n=10):
 # ---------------------------
 # Streamlit App Layout
 # ---------------------------
-st.title("📊 CBOE Put/Call Ratio Dashboard")
+st.title("📊 Put/Call Ratio Table")
 
 st.write("History of **TOTAL PUT/CALL RATIO** :")
 
