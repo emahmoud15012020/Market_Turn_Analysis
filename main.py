@@ -100,6 +100,67 @@ try:
 except Exception as e:
     st.error(f"Error fetching VIX: {e}")
 
+# --- PCR Analysis ---
+st.markdown("---")
+st.subheader("⚖️ Put/Call Ratio (PCR)")
+try:
+    total_puts = total_calls = 0
+    cursor = None
+    while True:
+        response = client.list_snapshot_options_chain(
+            symbol,
+            params={"order": "asc", "limit": 250, "sort": "ticker", "cursor": cursor}
+        )
+        for o in response:
+            contract_type = o.details.contract_type
+            oi = getattr(o, "open_interest", 0) or 0
+            if contract_type == "put":
+                total_puts += oi
+            elif contract_type == "call":
+                total_calls += oi
+        cursor = getattr(response, "next_url", None)
+        if not cursor: break
+
+    if total_calls > 0:
+        pcr = total_puts / total_calls
+        fig_pcr = go.Figure(go.Indicator(
+            mode="gauge+number",
+            value=pcr,
+            number={'valueformat': ".2f"},
+            title={'text': "Put/Call Ratio", 'font': {'size': 20}},
+            gauge={
+                'axis': {'range': [0, 2], 'tickwidth': 1, 'tickcolor': "darkgrey"},
+                'bar': {'color': "blue"},
+                'steps': [
+                    {'range': [0, 0.7], 'color': "green"},
+                    {'range': [0.7, 1.2], 'color': "white"},
+                    {'range': [1.2, 2], 'color': "red"},
+                ],
+                'threshold': {
+                    'line': {'color': "black", 'width': 4},
+                    'thickness': 0.75,
+                    'value': pcr
+                }
+            }
+        ))
+        st.plotly_chart(fig_pcr, use_container_width=True)
+
+        with st.expander("ℹ️ What is the Put/Call Ratio (PCR)?"):
+            st.markdown("""
+            - **PCR = Open Interest in Puts ÷ Open Interest in Calls**.
+            - Interpreted as:
+                - PCR > 1.2 → **Bearish** (more puts than calls).
+                - PCR < 0.7 → **Bullish** (more calls than puts).
+                - 0.7–1.2 → Neutral.
+            - Often used as a **contrarian signal**.
+            """)
+    else:
+        st.warning("No call option data to compute PCR.")
+except Exception as e:
+    st.error(f"Error fetching PCR: {e}")
+
+
+
 # ---------------------------
 # CBOE PCR Scraper
 # ---------------------------
